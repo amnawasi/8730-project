@@ -1,0 +1,8 @@
+requests
+pandas
+mysql-connector-python
+pymongo
+python-dotenv
+streamlit
+plotly
+praw
