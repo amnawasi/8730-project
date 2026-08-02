@@ -1,131 +1,111 @@
 """
-Transform step: map each TTC delay's raw incident `Code` into one of the
-four analysis categories from the proposal — mechanical, weather,
-operational, crowding — plus derived temporal features (day of week,
-rush hour, season).
+Clean + transform step for all three raw datasets (TTC delays, weather,
+sports events). Cleaning happens first (fix/remove bad rows), then
+transform/enrichment (derive new columns) happens on the cleaned data.
+Every cleaning action prints what it did — nothing is silently dropped.
 
-Code dictionary source:
+Code dictionary source (for delay_category):
 Official TTC "Code Descriptions" resource, retrieved via the Toronto
 Open Data CKAN API (package: ttc-subway-delay-data, resource:
-"Code Descriptions.csv"). This is the authoritative TTC-published
-code-to-meaning list — NOT a community-compiled guess. All 140 codes
-in that file are categorized below based on their official description.
-
-Category judgment calls (documented for transparency):
-  - EU* (Equipment/Rail Cars & Shops) -> mostly mechanical (physical
-    equipment faults); a few human-error entries -> operational
-  - PU* (Plant/Signals/Track) -> mostly mechanical (infrastructure
-    faults); weather-related entries (ice/snow, "track weather related")
-    -> weather; work-zone/contractor entries -> operational
-  - MU* (Miscellaneous/Transportation-subway) -> mixed: passenger
-    injuries/incidents -> crowding; crew/staffing/closures -> operational;
-    explicit weather/force-majeure -> weather
-  - SU* (Security) -> all crowding (every code is a passenger/security
-    incident: assault, disorderly patron, bomb threat, etc.)
-  - TU* (Transportation/operator-related) -> mostly operational (crew
-    and operator behaviour); "Storm Trains" -> weather
-  - A few genuinely ambiguous "Other"/"Miscellaneous" entries are left
-    as "uncategorized" rather than force-fit into a bucket.
+"Code Descriptions.csv"). All 140 codes categorized based on their
+official description — see comments below for the judgment calls made.
 
 Usage:
     python etl/transform.py
-Input:  data/raw/ttc_subway_delays_2023_2025.csv
-Output: data/processed/ttc_subway_delays_transformed.csv
-        data/processed/unmapped_codes_report.csv (should be near-empty now)
+
+Inputs (data/raw/):
+    ttc_subway_delays_2023_2025.csv
+    toronto_weather_2023_2025.csv
+    toronto_sports_events_2023_2025.csv
+
+Outputs (data/processed/):
+    ttc_subway_delays_transformed.csv
+    toronto_weather_cleaned.csv
+    toronto_sports_events_cleaned.csv
+    unmapped_codes_report.csv
+    cleaning_report.txt
 """
 
 import os
 import pandas as pd
 
-INPUT_PATH = os.path.join("data", "raw", "ttc_subway_delays_2023_2025.csv")
-OUTPUT_PATH = os.path.join("data", "processed", "ttc_subway_delays_transformed.csv")
-UNMAPPED_REPORT_PATH = os.path.join("data", "processed", "unmapped_codes_report.csv")
+RAW_DIR = os.path.join("data", "raw")
+OUT_DIR = os.path.join("data", "processed")
+
+TTC_IN = os.path.join(RAW_DIR, "ttc_subway_delays_2023_2025.csv")
+WEATHER_IN = os.path.join(RAW_DIR, "toronto_weather_2023_2025.csv")
+SPORTS_IN = os.path.join(RAW_DIR, "toronto_sports_events_2023_2025.csv")
+
+TTC_OUT = os.path.join(OUT_DIR, "ttc_subway_delays_transformed.csv")
+WEATHER_OUT = os.path.join(OUT_DIR, "toronto_weather_cleaned.csv")
+SPORTS_OUT = os.path.join(OUT_DIR, "toronto_sports_events_cleaned.csv")
+UNMAPPED_REPORT = os.path.join(OUT_DIR, "unmapped_codes_report.csv")
+CLEANING_REPORT = os.path.join(OUT_DIR, "cleaning_report.txt")
+
+report_lines = []
+
+
+def log(msg):
+    """Print and remember, so the cleaning report captures everything."""
+    print(msg)
+    report_lines.append(msg)
+
 
 # ---------------------------------------------------------------------
 # Official TTC code -> analysis bucket (mechanical / weather /
-# operational / crowding / uncategorized).
-# Source: TTC "Code Descriptions" CSV, Toronto Open Data CKAN API.
+# operational / crowding / uncategorized). Source: TTC "Code
+# Descriptions" CSV via CKAN API. See prior version's comments for the
+# full reasoning behind each judgment call.
 # ---------------------------------------------------------------------
 CODE_TO_BUCKET = {
-    # EU* — Equipment / Rail Cars & Shops
     "EUAC": "mechanical", "EUAL": "mechanical", "EUATC": "mechanical",
     "EUBK": "mechanical", "EUBO": "mechanical", "EUCA": "mechanical",
     "EUCC": "mechanical", "EUCD": "mechanical", "EUCH": "mechanical",
     "EUCO": "mechanical", "EUDO": "mechanical", "EUECD": "mechanical",
     "EUHV": "mechanical", "EULT": "mechanical", "EULV": "mechanical",
-    "EUME": "operational",  # maintenance human error, not an equipment fault
-    "EUNEA": "mechanical", "EUNT": "mechanical", "EUO": "mechanical",
-    "EUOE": "operational",  # operator error (signal violation/overshoot)
-    "EUOPO": "mechanical", "EUPI": "mechanical", "EUSC": "mechanical",
-    "EUTL": "mechanical", "EUTM": "mechanical", "EUTR": "mechanical",
-    "EUTRD": "mechanical", "EUVA": "mechanical", "EUVE": "mechanical",
-    "EUYRD": "mechanical",
-
-    # MU* — Miscellaneous / Transportation (subway)
+    "EUME": "operational", "EUNEA": "mechanical", "EUNT": "mechanical",
+    "EUO": "mechanical", "EUOE": "operational", "EUOPO": "mechanical",
+    "EUPI": "mechanical", "EUSC": "mechanical", "EUTL": "mechanical",
+    "EUTM": "mechanical", "EUTR": "mechanical", "EUTRD": "mechanical",
+    "EUVA": "mechanical", "EUVE": "mechanical", "EUYRD": "mechanical",
     "MUATC": "operational", "MUCL": "operational", "MUCP": "operational",
-    "MUCSA": "operational", "MUCU": "operational",
-    "MUD": "crowding",   # door problems, passenger-related
-    "MUDD": "operational",  # door problems, debris-related
-    "MUEC": "operational",
-    "MUESA": "operational",
-    "MUFM": "weather",   # explicit: "Force Majeure... re: Weather or Major Event"
-    "MUFS": "operational",  # fire/smoke, external source
-    "MUGD": "uncategorized",  # too vague ("miscellaneous general delays")
-    "MUI": "crowding", "MUIE": "operational",  # employee injury, not passenger
-    "MUIR": "crowding", "MUIRS": "crowding", "MUIS": "crowding",
-    "MULD": "operational", "MUNCA": "operational", "MUNOA": "operational",
-    "MUO": "uncategorized",  # "miscellaneous other"
-    "MUODC": "mechanical", "MUPAA": "crowding",  # passenger alarm
-    "MUPF": "mechanical",  # external power failure
+    "MUCSA": "operational", "MUCU": "operational", "MUD": "crowding",
+    "MUDD": "operational", "MUEC": "operational", "MUESA": "operational",
+    "MUFM": "weather", "MUFS": "operational", "MUGD": "uncategorized",
+    "MUI": "crowding", "MUIE": "operational", "MUIR": "crowding",
+    "MUIRS": "crowding", "MUIS": "crowding", "MULD": "operational",
+    "MUNCA": "operational", "MUNOA": "operational", "MUO": "uncategorized",
+    "MUODC": "mechanical", "MUPAA": "crowding", "MUPF": "mechanical",
     "MUPLA": "operational", "MUPLB": "operational", "MUPLC": "operational",
-    "MUPR1": "crowding",  # train in contact with a person
-    "MUSAN": "crowding",  # unsanitary vehicle (passenger-caused)
-    "MUSC": "mechanical", "MUTD": "operational", "MUTO": "operational",
-    "MUWEA": "weather", "MUWR": "operational",
-
-    # PU* — Plant / Signals / Track
+    "MUPR1": "crowding", "MUSAN": "crowding", "MUSC": "mechanical",
+    "MUTD": "operational", "MUTO": "operational", "MUWEA": "weather",
+    "MUWR": "operational",
     "PUATC": "mechanical", "PUCBI": "mechanical", "PUCSC": "mechanical",
-    "PUCSS": "mechanical", "PUDCS": "mechanical",
-    "PUEME": "operational",  # electrical maintenance error (human)
-    "PUEO": "mechanical", "PUEWZ": "operational",  # work zone = planned work
-    "PUMEL": "crowding",  # escalator/elevator incident involving a person
-    "PUMO": "operational",
-    "PUMST": "crowding",  # stairway incident involving a person
-    "PUOPO": "mechanical", "PUSAC": "mechanical", "PUSBE": "mechanical",
-    "PUSCA": "mechanical", "PUSCR": "mechanical",
-    "PUSEA": "crowding",  # emergency alarm station (passenger-triggered)
-    "PUSI": "mechanical", "PUSIO": "mechanical",
-    "PUSIS": "weather",  # "signals track weather related issues"
-    "PUSLC": "mechanical", "PUSNT": "mechanical", "PUSO": "mechanical",
-    "PUSRA": "mechanical", "PUSSW": "mechanical", "PUSTC": "mechanical",
-    "PUSTP": "mechanical", "PUSTS": "mechanical",
-    "PUSWZ": "operational",  # work zone
-    "PUSZC": "mechanical", "PUT0": "mechanical", "PUTCD": "operational",
-    "PUTD": "operational",   # debris at track level, controllable
-    "PUTDN": "operational",  # debris at track level, non-controllable
-    "PUTIJ": "mechanical",
-    "PUTIS": "weather",  # ice/snow related problem
-    "PUTNT": "mechanical",
-    "PUTOE": "operational",  # operator-related (violations, overshoots)
-    "PUTR": "mechanical", "PUTS": "mechanical", "PUTSC": "mechanical",
-    "PUTSM": "mechanical", "PUTTC": "mechanical", "PUTTP": "mechanical",
-    "PUTWZ": "operational",  # work zones, track
-
-    # SU* — Security (all passenger/security incidents)
+    "PUCSS": "mechanical", "PUDCS": "mechanical", "PUEME": "operational",
+    "PUEO": "mechanical", "PUEWZ": "operational", "PUMEL": "crowding",
+    "PUMO": "operational", "PUMST": "crowding", "PUOPO": "mechanical",
+    "PUSAC": "mechanical", "PUSBE": "mechanical", "PUSCA": "mechanical",
+    "PUSCR": "mechanical", "PUSEA": "crowding", "PUSI": "mechanical",
+    "PUSIO": "mechanical", "PUSIS": "weather", "PUSLC": "mechanical",
+    "PUSNT": "mechanical", "PUSO": "mechanical", "PUSRA": "mechanical",
+    "PUSSW": "mechanical", "PUSTC": "mechanical", "PUSTP": "mechanical",
+    "PUSTS": "mechanical", "PUSWZ": "operational", "PUSZC": "mechanical",
+    "PUT0": "mechanical", "PUTCD": "operational", "PUTD": "operational",
+    "PUTDN": "operational", "PUTIJ": "mechanical", "PUTIS": "weather",
+    "PUTNT": "mechanical", "PUTOE": "operational", "PUTR": "mechanical",
+    "PUTS": "mechanical", "PUTSC": "mechanical", "PUTSM": "mechanical",
+    "PUTTC": "mechanical", "PUTTP": "mechanical", "PUTWZ": "operational",
     "SUAE": "crowding", "SUAP": "crowding", "SUBT": "crowding",
     "SUCOL": "crowding", "SUDP": "crowding", "SUEAS": "crowding",
     "SUG": "crowding", "SUO": "crowding", "SUPOL": "crowding",
     "SUROB": "crowding", "SUSA": "crowding", "SUSP": "crowding",
     "SUUT": "crowding",
-
-    # TU* — Transportation / operator-related
     "TUATC": "operational", "TUCC": "operational", "TUDOE": "operational",
     "TUKEY": "operational", "TUML": "operational", "TUMVS": "operational",
     "TUNCA": "operational", "TUNIP": "operational", "TUNOA": "operational",
     "TUO": "operational", "TUOPO": "operational", "TUOS": "operational",
     "TUS": "operational", "TUSC": "operational", "TUSET": "operational",
-    "TUST": "weather",  # "Storm Trains"
-    "TUSUP": "operational", "TUUR": "operational",
+    "TUST": "weather", "TUSUP": "operational", "TUUR": "operational",
 }
 
 
@@ -133,16 +113,88 @@ def map_code_to_bucket(code):
     return CODE_TO_BUCKET.get(code, "uncategorized")
 
 
-def main():
-    if not os.path.exists(INPUT_PATH):
-        print(f"Input file not found: {INPUT_PATH}")
-        print("Run etl/extract_ttc_delays.py first.")
-        return
+# ---------------------------------------------------------------------
+# CLEANING
+# ---------------------------------------------------------------------
 
-    df = pd.read_csv(INPUT_PATH)
-    print(f"Loaded {len(df):,} rows from {INPUT_PATH}")
+def clean_ttc(df):
+    log(f"\n--- Cleaning TTC delay data ({len(df):,} rows in) ---")
+    start = len(df)
 
-    # --- derived temporal features (free — computed from existing columns) ---
+    # 1. exact duplicate rows
+    before = len(df)
+    df = df.drop_duplicates()
+    log(f"  Dropped {before - len(df):,} exact duplicate rows")
+
+    # 2. rows missing a Date or Time (can't analyze without them)
+    before = len(df)
+    df = df.dropna(subset=["Date", "Time"])
+    log(f"  Dropped {before - len(df):,} rows missing Date/Time")
+
+    # 3. negative delay minutes are invalid (delay can't be negative)
+    before = len(df)
+    df = df[df["Min Delay"].fillna(0) >= 0]
+    log(f"  Dropped {before - len(df):,} rows with negative Min Delay")
+
+    # 4. standardize Station text (trim whitespace, consistent casing)
+    df["Station"] = df["Station"].astype(str).str.strip().str.upper()
+
+    # 5. standardize Code text (trim whitespace so mapping lookups match)
+    df["Code"] = df["Code"].astype(str).str.strip().str.upper()
+
+    log(f"  Result: {len(df):,} rows kept ({start - len(df):,} removed total)")
+    return df
+
+
+def clean_weather(df):
+    log(f"\n--- Cleaning weather data ({len(df):,} rows in) ---")
+    start = len(df)
+
+    before = len(df)
+    df = df.drop_duplicates(subset=["Date/Time"])
+    log(f"  Dropped {before - len(df):,} duplicate-date rows")
+
+    # sanity check: min temp should not exceed max temp
+    bad_temp = df["Min Temp (°C)"] > df["Max Temp (°C)"]
+    if bad_temp.any():
+        log(f"  Flagged {bad_temp.sum()} rows where Min Temp > Max Temp "
+            f"(kept, but worth a manual look)")
+
+    # known gap: Total Rain / Total Snow are often blank on days where
+    # only Total Precip was recorded (TTC/ECCC doesn't always separate
+    # rain vs snow in winter). We leave these as NaN rather than
+    # guessing a split — noted here rather than silently left unexplained.
+    missing_rain = df["Total Rain (mm)"].isna().sum()
+    missing_snow = df["Total Snow (cm)"].isna().sum()
+    log(f"  Note: {missing_rain:,} rows missing Total Rain, "
+        f"{missing_snow:,} missing Total Snow (ECCC does not always "
+        f"split these from Total Precip — left as-is, not guessed)")
+
+    log(f"  Result: {len(df):,} rows kept ({start - len(df):,} removed total)")
+    return df
+
+
+def clean_sports(df):
+    log(f"\n--- Cleaning sports events data ({len(df):,} rows in) ---")
+    start = len(df)
+
+    before = len(df)
+    df = df.drop_duplicates(subset=["event_date", "home_team", "away_team"])
+    log(f"  Dropped {before - len(df):,} duplicate game rows")
+
+    before = len(df)
+    df = df.dropna(subset=["event_date", "home_team"])
+    log(f"  Dropped {before - len(df):,} rows missing date or home team")
+
+    log(f"  Result: {len(df):,} rows kept ({start - len(df):,} removed total)")
+    return df
+
+
+# ---------------------------------------------------------------------
+# TRANSFORM (derive new columns from the now-clean data)
+# ---------------------------------------------------------------------
+
+def transform_ttc(df):
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df["day_of_week"] = df["Date"].dt.day_name()
     df["is_weekend"] = df["day_of_week"].isin(["Saturday", "Sunday"])
@@ -164,29 +216,58 @@ def main():
         return (7 <= hour < 9) or (16 <= hour < 18)
 
     df["is_rush_hour"] = df.apply(is_rush_hour, axis=1)
-
-    # --- code -> category mapping (official TTC dictionary) ---
     df["delay_category"] = df["Code"].apply(map_code_to_bucket)
+    return df
 
-    # --- report any codes still unmapped (should be near-zero now) ---
-    unmapped = df[df["delay_category"] == "uncategorized"]
-    unmapped_summary = unmapped["Code"].value_counts().reset_index()
-    unmapped_summary.columns = ["Code", "row_count"]
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    df.to_csv(OUTPUT_PATH, index=False)
-    unmapped_summary.to_csv(UNMAPPED_REPORT_PATH, index=False)
+# ---------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------
 
-    print("\n==============================")
-    print(f"DONE. Transformed rows: {len(df):,}")
-    print(f"Saved to: {OUTPUT_PATH}")
-    print("\nDelay category breakdown:")
-    print(df["delay_category"].value_counts())
-    print(f"\nRush hour rows: {df['is_rush_hour'].sum():,} of {len(df):,}")
-    print(f"\nUnmapped/unknown codes: {len(unmapped_summary)} distinct codes "
-          f"({len(unmapped):,} rows, {len(unmapped)/len(df)*100:.1f}% of data)")
-    if len(unmapped_summary) > 0:
-        print(unmapped_summary.head(15).to_string(index=False))
+def main():
+    os.makedirs(OUT_DIR, exist_ok=True)
+
+    # --- TTC ---
+    if os.path.exists(TTC_IN):
+        ttc = pd.read_csv(TTC_IN)
+        ttc = clean_ttc(ttc)
+        ttc = transform_ttc(ttc)
+        ttc.to_csv(TTC_OUT, index=False)
+
+        unmapped = ttc[ttc["delay_category"] == "uncategorized"]
+        unmapped_summary = unmapped["Code"].value_counts().reset_index()
+        unmapped_summary.columns = ["Code", "row_count"]
+        unmapped_summary.to_csv(UNMAPPED_REPORT, index=False)
+
+        log(f"\nTTC delay_category breakdown:\n{ttc['delay_category'].value_counts()}")
+        log(f"Rush hour rows: {ttc['is_rush_hour'].sum():,} of {len(ttc):,}")
+        log(f"Unmapped codes: {len(unmapped_summary)} distinct "
+            f"({len(unmapped):,} rows, {len(unmapped)/len(ttc)*100:.1f}%)")
+        log(f"Saved: {TTC_OUT}")
+    else:
+        log(f"Skipped TTC — file not found: {TTC_IN}")
+
+    # --- Weather ---
+    if os.path.exists(WEATHER_IN):
+        weather = pd.read_csv(WEATHER_IN)
+        weather = clean_weather(weather)
+        weather.to_csv(WEATHER_OUT, index=False)
+        log(f"Saved: {WEATHER_OUT}")
+    else:
+        log(f"Skipped weather — file not found: {WEATHER_IN}")
+
+    # --- Sports ---
+    if os.path.exists(SPORTS_IN):
+        sports = pd.read_csv(SPORTS_IN)
+        sports = clean_sports(sports)
+        sports.to_csv(SPORTS_OUT, index=False)
+        log(f"Saved: {SPORTS_OUT}")
+    else:
+        log(f"Skipped sports — file not found: {SPORTS_IN}")
+
+    with open(CLEANING_REPORT, "w", encoding="utf-8") as f:
+        f.write("\n".join(report_lines))
+    log(f"\nFull cleaning report saved to: {CLEANING_REPORT}")
 
 
 if __name__ == "__main__":
