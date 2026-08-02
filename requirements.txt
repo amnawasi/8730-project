@@ -1,7 +1,7 @@
 requests
 pandas
 mysql-connector-python
-pymongo
+pymongo[srv]
 python-dotenv
 streamlit
 plotly
