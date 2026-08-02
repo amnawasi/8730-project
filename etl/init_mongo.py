@@ -21,9 +21,13 @@ load_dotenv()
 RAW_DELAY_INCIDENTS_VALIDATOR = {
     "$jsonSchema": {
         "bsonType": "object",
-        "required": ["delay_date", "network", "route_or_line", "raw_text", "source"],
+        "required": ["delay_id", "delay_date", "network", "route_or_line", "raw_text", "source"],
         "properties": {
-            "delay_date": {
+    "delay_id": {
+        "bsonType": "int",
+        "description": "FK to MySQL delays.delay_id — links this raw text to its structured record",
+    },
+    "delay_date": {
                 "bsonType": "string",
                 "description": "ISO date string, e.g. '2026-07-15' — matches MySQL delay_date",
             },
