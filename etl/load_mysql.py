@@ -14,6 +14,14 @@ has a foreign key to it):
 Re-runnable: uses INSERT ... ON DUPLICATE KEY UPDATE / INSERT IGNORE
 so running this twice doesn't create duplicate rows or crash.
 
+Note: sql/schema.sql is the single source of truth for the delays table
+shape (including delay_category and the widened incident_code/
+route_or_line/direction/vehicle_number columns). This script used to
+alter the schema at runtime to add/widen those on the fly; now that
+schema.sql has been updated to match, that logic has been removed —
+run sql/schema.sql once via MySQL Workbench (or `mysql < sql/schema.sql`)
+before running this script.
+
 Requires: pip install holidays  (in addition to requirements.txt)
 
 Usage:
@@ -206,51 +214,10 @@ def load_sports_events(conn):
     cur.close()
 
 
-def ensure_schema_ready(conn):
-    """schema.sql has a few columns too narrow for real TTC data:
-      - incident_code VARCHAR(10)   -- real values like "COLLISION - TTC
-                                        INVOLVED" run 25+ chars
-      - route_or_line VARCHAR(20)   -- some route/line names run longer
-      - delay_category (missing entirely, but central to the analysis)
-    Widen/add these if needed rather than silently truncating real data
-    or crashing partway through a load. Flag to Amna so schema.sql gets
-    updated too, for consistency across the team."""
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT COUNT(*) FROM information_schema.columns
-        WHERE table_schema = %s AND table_name = 'delays' AND column_name = 'delay_category'
-    """, (DB_CONFIG["database"],))
-    if cur.fetchone()[0] == 0:
-        print("delay_category column missing from delays table — adding it now "
-              "(flag this to Amna so schema.sql gets updated too, for consistency)")
-        cur.execute("""
-            ALTER TABLE delays
-            ADD COLUMN delay_category VARCHAR(20) AFTER incident_description,
-            ADD INDEX idx_delay_category (delay_category)
-        """)
-        conn.commit()
-
-    widen = [
-        ("incident_code", "VARCHAR(100)"),
-        ("route_or_line", "VARCHAR(50)"),
-        ("direction", "VARCHAR(50)"),
-        ("vehicle_number", "VARCHAR(20)"),
-    ]
-    for col, new_type in widen:
-        print(f"Widening delays.{col} to {new_type} (real TTC data exceeds the "
-              f"original schema width) — flag this to Amna for schema.sql too")
-        cur.execute(f"ALTER TABLE delays MODIFY COLUMN {col} {new_type}")
-    conn.commit()
-    cur.close()
-
-
 def load_delays(conn):
     if not os.path.exists(DELAYS_CSV):
         print(f"Skipped delays — file not found: {DELAYS_CSV}")
         return
-
-    ensure_schema_ready(conn)
 
     cur = conn.cursor()
     cur.execute("TRUNCATE TABLE delays")
