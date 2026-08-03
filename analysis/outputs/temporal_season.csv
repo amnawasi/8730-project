@@ -1,0 +1,13 @@
+network,season,avg_daily_delays
+subway,Winter,71.3939
+streetcar,Winter,42.5212
+bus,Winter,161.6909
+subway,Spring,72.7799
+streetcar,Spring,40.163
+bus,Spring,155.7337
+subway,Summer,69.7353
+streetcar,Summer,37.5588
+bus,Summer,169.9281
+subway,Fall,67.2784
+streetcar,Fall,36.5897
+bus,Fall,169.7766

@@ -1,0 +1,7 @@
+network,is_rush_hour,incident_count
+subway,0,75247
+subway,1,14802
+streetcar,0,43779
+streetcar,1,6515
+bus,0,171496
+bus,1,37519
