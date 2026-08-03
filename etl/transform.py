@@ -30,7 +30,7 @@ Inputs (data/raw/):
                                               by etl/extract_ttc_delays.py —
                                               split back out here)
     toronto_weather_2023_2026.csv
-    toronto_sports_events_2023_2026.csv
+    toronto_sports_events_2023_2025.csv
 
 Outputs (data/processed/):
     ttc_delays_transformed.csv       (all three networks combined)
@@ -49,7 +49,7 @@ OUT_DIR = os.path.join("data", "processed")
 TTC_IN = os.path.join(RAW_DIR, "ttc_all_networks_delays_2023_2026.csv")
 NETWORKS = ["subway", "streetcar", "bus"]
 WEATHER_IN = os.path.join(RAW_DIR, "toronto_weather_2023_2026.csv")
-SPORTS_IN = os.path.join(RAW_DIR, "toronto_sports_events_2023_2026.csv")
+SPORTS_IN = os.path.join(RAW_DIR, "toronto_sports_events_2023_2025.csv")
 
 TTC_OUT = os.path.join(OUT_DIR, "ttc_delays_transformed.csv")
 WEATHER_OUT = os.path.join(OUT_DIR, "toronto_weather_cleaned.csv")
