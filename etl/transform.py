@@ -25,9 +25,10 @@ Usage:
     python etl/transform.py
 
 Inputs (data/raw/):
-    ttc_subway_delays_2023_2026.csv
-    ttc_streetcar_delays_2023_2026.csv
-    ttc_bus_delays_2023_2026.csv
+    ttc_all_networks_delays_2023_2026.csv   (all three networks combined,
+                                              tagged with a 'network' column
+                                              by etl/extract_ttc_delays.py —
+                                              split back out here)
     toronto_weather_2023_2026.csv
     toronto_sports_events_2023_2026.csv
 
@@ -45,11 +46,8 @@ import pandas as pd
 RAW_DIR = os.path.join("data", "raw")
 OUT_DIR = os.path.join("data", "processed")
 
-TTC_FILES = {
-    "subway": os.path.join(RAW_DIR, "ttc_subway_delays_2023_2026.csv"),
-    "streetcar": os.path.join(RAW_DIR, "ttc_streetcar_delays_2023_2026.csv"),
-    "bus": os.path.join(RAW_DIR, "ttc_bus_delays_2023_2026.csv"),
-}
+TTC_IN = os.path.join(RAW_DIR, "ttc_all_networks_delays_2023_2026.csv")
+NETWORKS = ["subway", "streetcar", "bus"]
 WEATHER_IN = os.path.join(RAW_DIR, "toronto_weather_2023_2026.csv")
 SPORTS_IN = os.path.join(RAW_DIR, "toronto_sports_events_2023_2026.csv")
 
@@ -366,22 +364,31 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     all_ttc_frames = []
 
-    for network, path in TTC_FILES.items():
-        if not os.path.exists(path):
-            log(f"Skipped {network} — file not found: {path}")
-            continue
-        code_desc_lookup = load_code_descriptions(network) if network != "subway" else None
+    if not os.path.exists(TTC_IN):
+        log(f"Skipped TTC delays — file not found: {TTC_IN}")
+    else:
+        raw_all = pd.read_csv(TTC_IN, low_memory=False)
+        log(f"Loaded combined TTC delay file: {len(raw_all):,} rows total "
+            f"across all networks, from {TTC_IN}")
 
-        df = pd.read_csv(path)
-        df = normalize_columns(df)
-        df = clean_ttc(df, network)
-        df = transform_ttc(df, network, code_desc_lookup)
-        all_ttc_frames.append(df)
+        for network in NETWORKS:
+            df = raw_all[raw_all["network"] == network].copy()
+            if df.empty:
+                log(f"Skipped {network} — no rows found for this network in {TTC_IN} "
+                    f"(available networks in file: {sorted(raw_all['network'].unique())})")
+                continue
 
-        if network != "subway":
-            source = "official code descriptions + keyword matching" if code_desc_lookup \
-                else "keyword matching only (no official code list found)"
-            log(f"  NOTE: {network} delay_category used {source} — spot-check before relying on it heavily.")
+            code_desc_lookup = load_code_descriptions(network) if network != "subway" else None
+
+            df = normalize_columns(df)
+            df = clean_ttc(df, network)
+            df = transform_ttc(df, network, code_desc_lookup)
+            all_ttc_frames.append(df)
+
+            if network != "subway":
+                source = "official code descriptions + keyword matching" if code_desc_lookup \
+                    else "keyword matching only (no official code list found)"
+                log(f"  NOTE: {network} delay_category used {source} — spot-check before relying on it heavily.")
 
     if all_ttc_frames:
         combined = pd.concat(all_ttc_frames, ignore_index=True)
