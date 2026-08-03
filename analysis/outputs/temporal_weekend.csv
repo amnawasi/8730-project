@@ -1,0 +1,7 @@
+network,is_weekend,avg_daily_delays
+subway,1,60.0767
+streetcar,1,40.4466
+bus,1,138.211
+subway,0,74.6941
+streetcar,0,38.9594
+bus,0,173.8684

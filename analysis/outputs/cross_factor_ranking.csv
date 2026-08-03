@@ -1,0 +1,10 @@
+network,factor,pct_lift
+subway,Heavy snow (15cm+),12.028306263838688
+subway,Weekend vs weekday,-19.569684888096923
+subway,Any sports event day,-5.816571287219531
+streetcar,Heavy snow (15cm+),53.58248017658853
+streetcar,Weekend vs weekday,3.81730724805822
+streetcar,Any sports event day,-3.2058235654523317
+bus,Heavy snow (15cm+),23.607010808350104
+bus,Weekend vs weekday,-20.50826947277366
+bus,Any sports event day,-4.2000842967244765

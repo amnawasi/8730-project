@@ -1,0 +1,10 @@
+network,league,avg_daily_delays
+subway,NHL,68.4286
+streetcar,NHL,39.1048
+bus,NHL,150.1619
+subway,NBA,69.3077
+streetcar,NBA,41.2019
+bus,NBA,152.2404
+subway,MLB,66.9095
+streetcar,MLB,37.4609
+bus,MLB,165.0823
