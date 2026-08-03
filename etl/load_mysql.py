@@ -14,6 +14,14 @@ has a foreign key to it):
 Re-runnable: uses INSERT ... ON DUPLICATE KEY UPDATE / INSERT IGNORE
 so running this twice doesn't create duplicate rows or crash.
 
+Note: sql/schema.sql is the single source of truth for the delays table
+shape (including delay_category and the widened incident_code/
+route_or_line/direction/vehicle_number columns). This script used to
+alter the schema at runtime to add/widen those on the fly; now that
+schema.sql has been updated to match, that logic has been removed —
+run sql/schema.sql once via MySQL Workbench (or `mysql < sql/schema.sql`)
+before running this script.
+
 Requires: pip install holidays  (in addition to requirements.txt)
 
 Usage:
@@ -45,6 +53,15 @@ DB_CONFIG = {
     "password": os.getenv("MYSQL_PASSWORD"),
     "database": os.getenv("MYSQL_DATABASE", "ttc_delays"),
 }
+
+
+def clean(v):
+    """Convert pandas/NumPy NaN to Python None. Required because
+    mysql-connector-python can serialize a raw NaN as the literal text
+    'nan' inside the SQL statement (unquoted), which MySQL then reads
+    as a column reference — causing 'Unknown column nan in field list'
+    instead of correctly inserting NULL for a missing value."""
+    return None if pd.isna(v) else v
 
 
 def get_connection():
@@ -152,9 +169,9 @@ def load_weather(conn):
             continue
         rows.append((
             r["Date/Time"].date(),
-            r.get("Mean Temp (\u00b0C)"), r.get("Min Temp (\u00b0C)"), r.get("Max Temp (\u00b0C)"),
-            r.get("Total Precip (mm)"), r.get("Total Rain (mm)"), r.get("Total Snow (cm)"),
-            r.get("Snow on Grnd (cm)"),
+            clean(r.get("Mean Temp (\u00b0C)")), clean(r.get("Min Temp (\u00b0C)")), clean(r.get("Max Temp (\u00b0C)")),
+            clean(r.get("Total Precip (mm)")), clean(r.get("Total Rain (mm)")), clean(r.get("Total Snow (cm)")),
+            clean(r.get("Snow on Grnd (cm)")),
         ))
 
     cur = conn.cursor()
@@ -187,9 +204,9 @@ def load_sports_events(conn):
             continue
         rows.append((
             r["event_date"].date(),
-            r.get("home_team"),
-            r.get("league"),
-            r.get("venue"),
+            clean(r.get("home_team")),
+            clean(r.get("league")),
+            clean(r.get("venue")),
             bool(r.get("is_home_game", True)),
         ))
 
@@ -206,51 +223,10 @@ def load_sports_events(conn):
     cur.close()
 
 
-def ensure_schema_ready(conn):
-    """schema.sql has a few columns too narrow for real TTC data:
-      - incident_code VARCHAR(10)   -- real values like "COLLISION - TTC
-                                        INVOLVED" run 25+ chars
-      - route_or_line VARCHAR(20)   -- some route/line names run longer
-      - delay_category (missing entirely, but central to the analysis)
-    Widen/add these if needed rather than silently truncating real data
-    or crashing partway through a load. Flag to Amna so schema.sql gets
-    updated too, for consistency across the team."""
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT COUNT(*) FROM information_schema.columns
-        WHERE table_schema = %s AND table_name = 'delays' AND column_name = 'delay_category'
-    """, (DB_CONFIG["database"],))
-    if cur.fetchone()[0] == 0:
-        print("delay_category column missing from delays table — adding it now "
-              "(flag this to Amna so schema.sql gets updated too, for consistency)")
-        cur.execute("""
-            ALTER TABLE delays
-            ADD COLUMN delay_category VARCHAR(20) AFTER incident_description,
-            ADD INDEX idx_delay_category (delay_category)
-        """)
-        conn.commit()
-
-    widen = [
-        ("incident_code", "VARCHAR(100)"),
-        ("route_or_line", "VARCHAR(50)"),
-        ("direction", "VARCHAR(50)"),
-        ("vehicle_number", "VARCHAR(20)"),
-    ]
-    for col, new_type in widen:
-        print(f"Widening delays.{col} to {new_type} (real TTC data exceeds the "
-              f"original schema width) — flag this to Amna for schema.sql too")
-        cur.execute(f"ALTER TABLE delays MODIFY COLUMN {col} {new_type}")
-    conn.commit()
-    cur.close()
-
-
 def load_delays(conn):
     if not os.path.exists(DELAYS_CSV):
         print(f"Skipped delays — file not found: {DELAYS_CSV}")
         return
-
-    ensure_schema_ready(conn)
 
     cur = conn.cursor()
     cur.execute("TRUNCATE TABLE delays")
@@ -260,7 +236,14 @@ def load_delays(conn):
     df = pd.read_csv(DELAYS_CSV, low_memory=False)
     df["date"] = pd.to_datetime(df["date"], errors="coerce", format="mixed")
 
+    has_raw_text = "incident_description_raw" in df.columns
+    if not has_raw_text:
+        print("WARNING: 'incident_description_raw' column not found in "
+              f"{DELAYS_CSV} — did transform.py drop it? load_mongo.py needs "
+              "this column to populate raw_delay_incidents. Continuing without it.")
+
     rows = []
+    mapping_rows = []  # for MongoDB linkage: delay_id + raw text, written after insert
     skipped = 0
     for _, r in df.iterrows():
         if pd.isna(r["date"]):
@@ -268,21 +251,28 @@ def load_delays(conn):
             continue
         rows.append((
             r["date"].date(),
-            r.get("time"),
-            r.get("network"),
-            r.get("route_or_line"),
-            r.get("location"),
-            r.get("code"),           # incident_code: raw code (subway) or
+            clean(r.get("time")),
+            clean(r.get("network")),
+            clean(r.get("route_or_line")),
+            clean(r.get("location")),
+            clean(r.get("code")),    # incident_code: raw code (subway) or
                                        # short text reason (streetcar/bus)
             None,                     # incident_description: no reliable free-text
                                        # available per Eric's finding, left NULL
-            r.get("delay_category"),
-            r.get("min_delay") if pd.notna(r.get("min_delay")) else None,
-            r.get("min_gap") if pd.notna(r.get("min_gap")) else None,
-            r.get("direction"),
-            r.get("vehicle"),
+            clean(r.get("delay_category")),
+            clean(r.get("min_delay")),
+            clean(r.get("min_gap")),
+            clean(r.get("direction")),
+            clean(r.get("vehicle")),
             bool(r.get("is_rush_hour", False)),
         ))
+        mapping_rows.append({
+            "date": r["date"].date().isoformat(),
+            "network": r.get("network"),
+            "route_or_line": r.get("route_or_line"),
+            "raw_text": r.get("incident_description_raw") if has_raw_text else None,
+            "source": "TTC Open Data (CKAN)",
+        })
 
     cur = conn.cursor()
     sql = """
@@ -300,6 +290,19 @@ def load_delays(conn):
 
     print(f"delays: inserted {len(rows):,} rows ({skipped:,} skipped for missing date)")
     cur.close()
+
+    # TRUNCATE reset the auto-increment counter to 1, and rows were inserted
+    # in the exact order of `rows` (executemany preserves order across
+    # batches), so delay_id 1..N maps positionally onto mapping_rows 1..N.
+    # This lets load_mongo.py link raw text to the right MySQL row without
+    # a second round-trip to the database.
+    for i, m in enumerate(mapping_rows, start=1):
+        m["delay_id"] = i
+    mapping_df = pd.DataFrame(mapping_rows)
+    mapping_path = os.path.join(PROCESSED_DIR, "delay_id_mapping.csv")
+    mapping_df.to_csv(mapping_path, index=False)
+    print(f"delay_id mapping: wrote {len(mapping_df):,} rows to {mapping_path} "
+          f"(for etl/load_mongo.py)")
 
 
 def main():
