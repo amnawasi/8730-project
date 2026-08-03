@@ -1,0 +1,37 @@
+network,bucket,avg_daily_delays,factor
+subway,0 to 15C,70.6556,temperature
+streetcar,0 to 15C,39.8195,temperature
+bus,0 to 15C,159.2394,temperature
+subway,-10 to 0C,70.9444,temperature
+streetcar,-10 to 0C,41.1154,temperature
+bus,-10 to 0C,158.4701,temperature
+subway,< -10C,84.7941,temperature
+streetcar,< -10C,53.1471,temperature
+bus,< -10C,191.7353,temperature
+subway,> 15C,69.0966,temperature
+streetcar,> 15C,37.0043,temperature
+bus,> 15C,169.4142,temperature
+subway,No snow,70.0481,snow_on_ground
+streetcar,No snow,38.5529,snow_on_ground
+bus,No snow,162.1154,snow_on_ground
+subway,1-5cm,70.6321,snow_on_ground
+streetcar,1-5cm,37.7453,snow_on_ground
+bus,1-5cm,156.3774,snow_on_ground
+subway,5-15cm,70.7973,snow_on_ground
+streetcar,5-15cm,38.1486,snow_on_ground
+bus,5-15cm,167.7973,snow_on_ground
+subway,15cm+,78.4737,snow_on_ground
+streetcar,15cm+,59.2105,snow_on_ground
+bus,15cm+,200.386,snow_on_ground
+subway,Light,72.4048,precipitation
+streetcar,Light,39.4137,precipitation
+bus,Light,163.0923,precipitation
+subway,None,68.6772,precipitation
+streetcar,None,38.8598,precipitation
+bus,None,159.6429,precipitation
+subway,Heavy,77.871,precipitation
+streetcar,Heavy,44.0323,precipitation
+bus,Heavy,192.8548,precipitation
+subway,Moderate,72.9512,precipitation
+streetcar,Moderate,40.187,precipitation
+bus,Moderate,175.3577,precipitation

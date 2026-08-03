@@ -1,0 +1,7 @@
+network,day_type,avg_daily_delays
+subway,No event,71.9582
+subway,Event day,67.7727
+streetcar,No event,39.8244
+streetcar,Event day,38.5477
+bus,No event,166.08
+bus,Event day,159.1045
