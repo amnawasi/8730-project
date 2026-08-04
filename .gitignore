@@ -223,6 +223,7 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/processed/dashboard_summary.csv
 
 # OS / editor
 .DS_Store

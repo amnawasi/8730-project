@@ -12,3 +12,4 @@ kaleido
 scipy
 openpyxl
 xlrd
+statsmodels
